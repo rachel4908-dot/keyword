@@ -43,6 +43,46 @@ def get_public_ip():
     except:
         return "Unknown"
 
+def get_related_keywords(query):
+    """네이버에서 연관검색어 조회"""
+    try:
+        encText = urllib.parse.quote(query)
+        url = f"https://openapi.naver.com/v1/search/shop.json?query={encText}&display=100"
+        
+        request = urllib.request.Request(url)
+        request.add_header("X-Naver-Client-Id", client_id)
+        request.add_header("X-Naver-Client-Secret", client_secret)
+        response = urllib.request.urlopen(request)
+        result = json.loads(response.read())
+        
+        # 상품 제목에서 키워드 추출
+        titles = [re.sub(r"<.*?>", "", item["title"]) for item in result.get("items", [])]
+        
+        # 키워드 분석 및 연관검색어 생성
+        all_words = []
+        for title in titles:
+            # 공백과 특수문자로 분리
+            words = re.findall(r'[가-힣a-zA-Z0-9]+', title)
+            all_words.extend(words)
+        
+        # 단어 빈도 계산 (원래 검색어 제외)
+        word_freq = {}
+        original_words = set(re.findall(r'[가-힣a-zA-Z0-9]+', query.lower()))
+        
+        for word in all_words:
+            word_lower = word.lower()
+            if len(word) >= 2 and word_lower not in original_words:
+                word_freq[word] = word_freq.get(word, 0) + 1
+        
+        # 빈도순으로 정렬하여 상위 20개 반환
+        related_keywords = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)[:20]
+        
+        return [keyword for keyword, freq in related_keywords]
+        
+    except Exception as e:
+        st.error(f"연관검색어 조회 중 오류 발생: {e}")
+        return []
+
 def get_top_ranked_product_by_mall(keyword, mall_name, progress_callback=None):
     """네이버 쇼핑에서 특정 쇼핑몰의 최고 순위 상품 검색"""
     encText = urllib.parse.quote(keyword)
@@ -110,15 +150,35 @@ def main():
         st.info(f"사용자 ID: {get_user_id()[:8]}...")
         st.info(f"IP 주소: {get_public_ip()}")
         st.markdown("---")
-        st.markdown("**사용법:**")
-        st.markdown("1. 검색할 키워드들을 쉼표로 구분하여 입력")
-        st.markdown("2. 찾고자 하는 판매처명 입력")
-        st.markdown("3. '순위 확인' 버튼 클릭")
+        st.markdown("**기능:**")
+        st.markdown("• **순위 확인**: 특정 쇼핑몰의 상품 순위 검색")
+        st.markdown("• **연관검색어**: 키워드의 연관검색어 조회")
+    
+    # 탭 생성
+    tab1, tab2 = st.tabs(["🎯 순위 확인", "🔗 연관검색어"])
+    
+    with tab1:
+        rank_checker_tab()
+    
+    with tab2:
+        related_keywords_tab()
+    
+    # 푸터
+    st.markdown("---")
+    st.markdown(
+        "<div style='text-align: center; color: gray; font-size: 12px;'>"
+        "ⓒ 2025 happy. 무단 복제 및 배포 금지. All rights reserved."
+        "</div>",
+        unsafe_allow_html=True
+    )
+
+def rank_checker_tab():
+    """순위 확인 탭"""
+    st.subheader("🎯 순위 확인")
+    st.markdown("특정 쇼핑몰에서 상품의 네이버 쇼핑 순위를 확인합니다.")
     
     # 입력 폼
     with st.form("rank_check_form"):
-        st.subheader("📝 검색 정보 입력")
-        
         # 키워드 입력
         keywords_input = st.text_area(
             "검색어 (최대 10개, 쉼표로 구분)",
@@ -219,15 +279,62 @@ def main():
             st.metric("발견된 상품", found_count)
         with col3:
             st.metric("발견율", f"{(found_count/total_count*100):.1f}%")
+
+def related_keywords_tab():
+    """연관검색어 탭"""
+    st.subheader("🔗 연관검색어 조회")
+    st.markdown("입력한 키워드와 관련된 연관검색어를 네이버 쇼핑에서 찾아드립니다.")
     
-    # 푸터
-    st.markdown("---")
-    st.markdown(
-        "<div style='text-align: center; color: gray; font-size: 12px;'>"
-        "ⓒ 2025 happy. 무단 복제 및 배포 금지. All rights reserved."
-        "</div>",
-        unsafe_allow_html=True
-    )
+    # 입력 폼
+    with st.form("related_keywords_form"):
+        query = st.text_input(
+            "검색어",
+            placeholder="예: 키보드",
+            help="연관검색어를 찾을 키워드를 입력하세요"
+        )
+        
+        submitted = st.form_submit_button("🔍 연관검색어 조회", use_container_width=True)
+    
+    if submitted:
+        if not query.strip():
+            st.error("⚠️ 검색어를 입력해주세요.")
+            return
+        
+        with st.spinner(f"'{query}' 키워드의 연관검색어를 조회하고 있습니다..."):
+            related_keywords = get_related_keywords(query.strip())
+        
+        if related_keywords:
+            st.success(f"✅ '{query}' 키워드의 연관검색어 {len(related_keywords)}개를 찾았습니다!")
+            
+            # 연관검색어 목록 표시
+            st.subheader("📝 연관검색어 목록")
+            
+            # 3열로 표시
+            cols = st.columns(3)
+            for i, keyword in enumerate(related_keywords):
+                with cols[i % 3]:
+                    if st.button(f"🔍 {keyword}", key=f"related_{i}", use_container_width=True):
+                        st.session_state.selected_keyword = keyword
+                        st.rerun()
+            
+            # 선택된 키워드로 검색
+            if 'selected_keyword' in st.session_state:
+                st.info(f"선택된 키워드: **{st.session_state.selected_keyword}**")
+                st.markdown("순위 확인 탭에서 이 키워드로 검색해보세요!")
+            
+            # 텍스트로 복사 가능한 목록
+            st.subheader("📋 복사 가능한 목록")
+            keywords_text = ", ".join(related_keywords)
+            st.text_area(
+                "연관검색어 (복사용)",
+                value=keywords_text,
+                height=100,
+                help="이 텍스트를 복사하여 순위 확인 탭에서 사용할 수 있습니다"
+            )
+            
+        else:
+            st.warning(f"❌ '{query}' 키워드의 연관검색어를 찾을 수 없습니다.")
+            st.info("다른 키워드로 시도해보세요.")
 
 if __name__ == "__main__":
     main()
