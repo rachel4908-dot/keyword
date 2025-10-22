@@ -10,9 +10,13 @@ import json
 import urllib.request
 import urllib.parse
 import re
+import requests
+import time
+import hmac
+import hashlib
+import base64
 from datetime import datetime
 from dotenv import load_dotenv
-import time
 
 # Load environment variables
 load_dotenv()
@@ -42,6 +46,150 @@ def get_public_ip():
             return response.read().decode()
     except:
         return "Unknown"
+
+def get_keyword_search_volume(keywords):
+    """네이버 검색 API를 사용한 검색수 추정"""
+    try:
+        results = []
+        
+        for keyword in keywords:
+            # 네이버 쇼핑 검색으로 결과 수 확인
+            encText = urllib.parse.quote(keyword)
+            
+            # 여러 검색 엔진에서 데이터 수집
+            search_data = {}
+            
+            # 1. 네이버 쇼핑 검색
+            try:
+                url = f"https://openapi.naver.com/v1/search/shop.json?query={encText}&display=100"
+                request = urllib.request.Request(url)
+                request.add_header("X-Naver-Client-Id", client_id)
+                request.add_header("X-Naver-Client-Secret", client_secret)
+                response = urllib.request.urlopen(request)
+                result = json.loads(response.read())
+                search_data['shop_total'] = result.get('total', 0)
+            except:
+                search_data['shop_total'] = 0
+            
+            # 2. 네이버 블로그 검색
+            try:
+                url = f"https://openapi.naver.com/v1/search/blog.json?query={encText}&display=100"
+                request = urllib.request.Request(url)
+                request.add_header("X-Naver-Client-Id", client_id)
+                request.add_header("X-Naver-Client-Secret", client_secret)
+                response = urllib.request.urlopen(request)
+                result = json.loads(response.read())
+                search_data['blog_total'] = result.get('total', 0)
+            except:
+                search_data['blog_total'] = 0
+            
+            # 3. 네이버 뉴스 검색
+            try:
+                url = f"https://openapi.naver.com/v1/search/news.json?query={encText}&display=100"
+                request = urllib.request.Request(url)
+                request.add_header("X-Naver-Client-Id", client_id)
+                request.add_header("X-Naver-Client-Secret", client_secret)
+                response = urllib.request.urlopen(request)
+                result = json.loads(response.read())
+                search_data['news_total'] = result.get('total', 0)
+            except:
+                search_data['news_total'] = 0
+            
+            # 검색수 추정 알고리즘 (개선된 버전)
+            shop_score = min(search_data['shop_total'], 1000000)
+            blog_score = min(search_data['blog_total'], 1000000) 
+            news_score = min(search_data['news_total'], 1000000)
+            
+            # 가중치를 적용한 검색수 추정
+            # 쇼핑(40%), 블로그(40%), 뉴스(20%) 비중
+            estimated_base = int((shop_score * 0.4 + blog_score * 0.4 + news_score * 0.2) * 0.1)
+            
+            # 최소/최대 범위 설정
+            estimated_monthly = max(min(estimated_base, 999999), 100)
+            
+            # PC/모바일 비율 (일반적인 통계 기반)
+            estimated_mobile = int(estimated_monthly * 0.65)  # 모바일 65%
+            estimated_pc = int(estimated_monthly * 0.35)      # PC 35%
+            
+            # 경쟁도 계산 (상대적)
+            if estimated_monthly > 50000:
+                competition = "높음"
+            elif estimated_monthly > 10000:
+                competition = "보통"
+            else:
+                competition = "낮음"
+            
+            results.append({
+                'keyword': keyword,
+                'monthly_pc_qc': estimated_pc,
+                'monthly_mobile_qc': estimated_mobile,
+                'monthly_ave_qc': estimated_monthly,
+                'competition': competition,
+                'shop_results': search_data['shop_total'],
+                'blog_results': search_data['blog_total'],
+                'news_results': search_data['news_total']
+            })
+            
+            # API 호출 간격 조절
+            time.sleep(0.1)
+        
+        return results
+        
+    except Exception as e:
+        st.error(f"검색수 조회 중 오류 발생: {str(e)}")
+        return []
+
+def get_search_volume_alternative(keywords):
+    """네이버 검색 API를 사용한 간접적 검색수 추정"""
+    try:
+        results = []
+        
+        for keyword in keywords:
+            # 네이버 쇼핑 검색으로 결과 수 확인
+            encText = urllib.parse.quote(keyword)
+            url = f"https://openapi.naver.com/v1/search/shop.json?query={encText}&display=100"
+            
+            request = urllib.request.Request(url)
+            request.add_header("X-Naver-Client-Id", client_id)
+            request.add_header("X-Naver-Client-Secret", client_secret)
+            response = urllib.request.urlopen(request)
+            result = json.loads(response.read())
+            
+            total_count = result.get('total', 0)
+            
+            # 검색 결과 수를 바탕으로 검색수 추정 (임시 공식)
+            estimated_monthly = min(total_count * 10, 999999)  # 대략적 추정
+            estimated_pc = int(estimated_monthly * 0.3)
+            estimated_mobile = int(estimated_monthly * 0.7)
+            
+            results.append({
+                'keyword': keyword,
+                'monthly_pc_qc': estimated_pc,
+                'monthly_mobile_qc': estimated_mobile,
+                'monthly_ave_qc': estimated_monthly,
+                'competition': '추정치'
+            })
+        
+        return results
+        
+    except Exception as e:
+        st.error(f"대안 검색수 조회 실패: {e}")
+        return []
+
+def create_signature(timestamp, method, uri, secret_key):
+    """네이버 광고 API 서명 생성"""
+    import hmac
+    import hashlib
+    import base64
+    
+    message = f"{timestamp}.{method}.{uri}"
+    signature = hmac.new(
+        secret_key.encode('utf-8'),
+        message.encode('utf-8'),
+        hashlib.sha256
+    ).digest()
+    
+    return base64.b64encode(signature).decode('utf-8')
 
 def get_related_keywords(query):
     """네이버에서 연관검색어 조회"""
@@ -153,15 +301,19 @@ def main():
         st.markdown("**기능:**")
         st.markdown("• **순위 확인**: 특정 쇼핑몰의 상품 순위 검색")
         st.markdown("• **연관검색어**: 키워드의 연관검색어 조회")
+        st.markdown("• **검색수 조회**: 키워드 월간 PC/모바일 검색수")
     
     # 탭 생성
-    tab1, tab2 = st.tabs(["🎯 순위 확인", "🔗 연관검색어"])
+    tab1, tab2, tab3 = st.tabs(["🎯 순위 확인", "🔗 연관검색어", "📊 검색수 조회"])
     
     with tab1:
         rank_checker_tab()
     
     with tab2:
         related_keywords_tab()
+    
+    with tab3:
+        search_volume_tab()
     
     # 푸터
     st.markdown("---")
@@ -335,6 +487,146 @@ def related_keywords_tab():
         else:
             st.warning(f"❌ '{query}' 키워드의 연관검색어를 찾을 수 없습니다.")
             st.info("다른 키워드로 시도해보세요.")
+
+def search_volume_tab():
+    """검색수 조회 탭"""
+    st.subheader("📊 키워드 월간 검색수 추정")
+    st.markdown("네이버 검색 API(쇼핑, 블로그, 뉴스)를 통해 키워드의 PC/모바일 월간 검색수를 추정합니다.")
+    
+    # 설명 추가
+    with st.expander("📋 추정 방법 안내"):
+        st.markdown("""
+        **검색수 추정 알고리즘:**
+        - 네이버 쇼핑, 블로그, 뉴스 검색 결과 수를 수집
+        - 가중치 적용: 쇼핑(40%) + 블로그(40%) + 뉴스(20%)
+        - PC/모바일 비율: PC(35%) + 모바일(65%)
+        - 경쟁도: 높음(5만+), 보통(1만+), 낮음(1만 미만)
+        
+        **주의사항:**
+        - 실제 검색수가 아닌 추정치입니다
+        - 참고용으로만 사용하시기 바랍니다
+        """)
+    
+    # 입력 폼
+    with st.form("search_volume_form"):
+        keywords_input = st.text_area(
+            "검색어 (최대 5개, 쉼표로 구분)",
+            placeholder="예: 키보드, 마우스, 충전기",
+            height=100,
+            help="월간 검색수를 조회할 키워드들을 쉼표(,)로 구분하여 입력하세요"
+        )
+        
+        submitted = st.form_submit_button("📊 검색수 조회", use_container_width=True)
+    
+    if submitted:
+        if not keywords_input.strip():
+            st.error("⚠️ 검색어를 입력해주세요.")
+            return
+        
+        keywords = [k.strip() for k in keywords_input.split(",") if k.strip()]
+        
+        if len(keywords) > 5:
+            st.error("⚠️ 검색어는 최대 5개까지 입력 가능합니다.")
+            return
+        
+        if not keywords:
+            st.error("⚠️ 올바른 검색어를 입력해주세요.")
+            return
+        
+        with st.spinner("키워드 검색수를 조회하고 있습니다..."):
+            results = get_keyword_search_volume(keywords)
+        
+        if results:
+            st.success(f"✅ {len(results)}개 키워드의 검색수를 추정했습니다!")
+            
+            # 결과 타입 표시
+            if results and results[0].get('competition') == '추정치':
+                st.info("💡 네이버 검색 API(쇼핑/블로그/뉴스)를 통해 검색수를 추정합니다. 참고용으로만 사용하시기 바랍니다.")
+            
+            # 결과 테이블 표시
+            st.subheader("📈 월간 검색수 추정 결과")
+            
+            # 데이터프레임 생성
+            import pandas as pd
+            
+            df_data = []
+            for result in results:
+                df_data.append({
+                    "키워드": result['keyword'],
+                    "PC 검색수": f"{result['monthly_pc_qc']:,}",
+                    "모바일 검색수": f"{result['monthly_mobile_qc']:,}",
+                    "전체 검색수": f"{result['monthly_pc_qc'] + result['monthly_mobile_qc']:,}",
+                    "경쟁도": result['competition']
+                })
+            
+            df = pd.DataFrame(df_data)
+            st.dataframe(df, use_container_width=True)
+            
+            # 개별 키워드 상세 정보
+            st.subheader("📋 상세 정보")
+            
+            for result in results:
+                with st.expander(f"🔍 {result['keyword']} 상세 정보"):
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.metric(
+                            "PC 월간 검색수",
+                            f"{result['monthly_pc_qc']:,}",
+                            help="PC에서의 월간 검색수"
+                        )
+                    
+                    with col2:
+                        st.metric(
+                            "모바일 월간 검색수",
+                            f"{result['monthly_mobile_qc']:,}",
+                            help="모바일에서의 월간 검색수"
+                        )
+                    
+                    with col3:
+                        total_searches = result['monthly_pc_qc'] + result['monthly_mobile_qc']
+                        st.metric(
+                            "전체 월간 검색수",
+                            f"{total_searches:,}",
+                            help="PC + 모바일 전체 월간 검색수"
+                        )
+                    
+                    # 비율 차트
+                    if result['monthly_pc_qc'] > 0 or result['monthly_mobile_qc'] > 0:
+                        pc_ratio = result['monthly_pc_qc'] / (result['monthly_pc_qc'] + result['monthly_mobile_qc']) * 100
+                        mobile_ratio = 100 - pc_ratio
+                        
+                        st.write("**검색 비율:**")
+                        st.write(f"PC: {pc_ratio:.1f}% | 모바일: {mobile_ratio:.1f}%")
+                        
+                        # 프로그레스 바로 비율 표시
+                        st.progress(pc_ratio / 100, text=f"PC: {pc_ratio:.1f}%")
+                        st.progress(mobile_ratio / 100, text=f"모바일: {mobile_ratio:.1f}%")
+            
+            # 요약 정보
+            st.subheader("📊 전체 요약")
+            
+            total_pc = sum(r['monthly_pc_qc'] for r in results)
+            total_mobile = sum(r['monthly_mobile_qc'] for r in results)
+            total_all = total_pc + total_mobile
+            
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric("추정 키워드 수", len(results))
+            
+            with col2:
+                st.metric("총 PC 검색수", f"{total_pc:,}")
+            
+            with col3:
+                st.metric("총 모바일 검색수", f"{total_mobile:,}")
+            
+            with col4:
+                st.metric("전체 검색수", f"{total_all:,}")
+            
+        else:
+            st.warning("❌ 검색수 정보를 추정할 수 없습니다.")
+            st.info("API 키 설정을 확인하거나 다른 키워드로 시도해보세요.")
 
 if __name__ == "__main__":
     main()
