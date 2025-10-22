@@ -1,19 +1,11 @@
 """
-본 프로그램 'RankChecker by L&C'는 Link&Co, Inc.에 의해 개발된 소프트웨어입니다.
-해당 소스코드 및 실행 파일의 무단 복제, 배포, 역컴파일, 수정은
-저작권법 및 컴퓨터프로그램 보호법에 따라 엄격히 금지됩니다.
-
-무단 유포 및 상업적 이용 시 민형사상 법적 책임을 물을 수 있습니다.
-※ 본 프로그램은 사용자 추적 및 차단 기능이 포함되어 있습니다.
-
-Copyright ⓒ 2025 Link&Co. All rights reserved.
-Unauthorized reproduction or redistribution is strictly prohibited. 
+네이버 순위 확인기 (by happy)
+Copyright ⓒ 2025 happy. All rights reserved.
 """
  
 import sys
 import os
 import uuid
-import socket
 import json
 import urllib.request
 import urllib.parse
